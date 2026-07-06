@@ -54,8 +54,10 @@ impl Default for AudioConfig {
     fn default() -> Self {
         Self {
             sample_rate: 16_000,
-            chunk_ms: 2000,
-            overlap_ms: 500,
+            // 5 s chunks (vs 2 s) give Whisper more phonetic context —
+            // trade-off is ~3 s additional latency per the fidelity plan
+            chunk_ms: 5000,
+            overlap_ms: 1000,
             silence_threshold: 0.02,
             input_sample_rate: 48_000,
             input_channels: 2,
@@ -508,8 +510,8 @@ mod tests {
     fn test_config() -> AudioConfig {
         AudioConfig {
             sample_rate: 16_000,
-            chunk_ms: 2000,
-            overlap_ms: 500,
+            chunk_ms: 5000,
+            overlap_ms: 1000,
             ..Default::default()
         }
     }
