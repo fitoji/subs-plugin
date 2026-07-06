@@ -43,7 +43,7 @@ import tqdm  # for custom download progress bar
 #   small  → better quality, slightly slower
 #   medium → great quality, needs ~5 GB RAM
 #   large  → best quality, needs ~10 GB RAM
-WHISPER_MODEL = "mlx-community/whisper-large-v3-turbo-asr-fp16"
+WHISPER_MODEL = "mlx-community/whisper-large-v3-turbo"
 CHUNK_DURATION_S = 2.0  # expected audio chunk duration
 SAMPLE_RATE = 16000
 OVERLAP_S = 0.5  # overlap between consecutive chunks
