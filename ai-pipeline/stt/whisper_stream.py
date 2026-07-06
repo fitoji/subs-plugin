@@ -47,16 +47,36 @@ import tqdm  # for custom download progress bar
 #   large-v3-turbo-8bit → faster, less RAM, slight quality loss
 #   large-v3-turbo-asr-fp16 → INCOMPATIBLE with mlx-whisper 0.4.3
 WHISPER_MODEL = "mlx-community/whisper-large-v3-turbo"
-CHUNK_DURATION_S = 2.0  # expected audio chunk duration
 SAMPLE_RATE = 16000
 OVERLAP_S = 1.0  # overlap between consecutive chunks (matches Rust AudioConfig)
 
 # Streaming state: accumulate audio and track which parts are transcribed
 _CONTEXT_BUFFER: list[float] = []  # mono float samples
-# Timestamp-based dedup (replaces old sample-based _COMMITTED_SAMPLES)
-_BUFFER_START_TIME: float = 0.0   # absolute time of first sample in buffer (s)
-_COMMITTED_ABS_END_S: float = 0.0 # abs end time of last word sent to frontend
+
+# The fundamental approach for streaming Whisper is:
+#   1. Keep audio accumulating in a buffer (bounded at ~30 s = Whisper's native window).
+#   2. On each call, transcribe the FULL buffer (so the encoder has full acoustic
+#      context), but use ``clip_timestamps`` to DECODE ONLY the new portion.
+#   3. Since each region of audio is decoded exactly ONCE, word timestamps are
+#      stable and we never re-decode the same audio — eliminating the duplication
+#      and timestamp-shift problems that plagued the earlier implementation.
+#   4. ``initial_prompt`` carries the last ~200 characters of transcribed text
+#      as context, compensating for ``condition_on_previous_text=False``.
+
+_COMMITTED_END_S: float = 0.0  # seconds from buffer start — last decoded time
+
+# Last ~200 characters of transcribed text, used to condition the decoder
+# across chunks (compensates for ``condition_on_previous_text=False``).
+_LAST_TEXT: str = ""
+
+# Original bilingual prompt — kept separate so we can prepend it on every call.
+_INITIAL_PROMPT: str = (
+    "Hello, how are you? Guten Tag, wie geht es Ihnen? "
+    "The weather is nice. Das Wetter ist schön."
+)
+
 _MODEL = None  # lazy-loaded whisper model
+_TRANSCRIBE_KWARGS: dict = {}  # filled by load_model(), mutated per-call
 
 
 # ---------------------------------------------------------------------------
@@ -108,18 +128,18 @@ def append_to_context(chunk: np.ndarray) -> None:
 
 
 def trim_context() -> None:
-    """Keep buffer bounded at 30 s; advance start time so timestamps stay consistent.
+    """Keep buffer bounded at 30 s (Whisper's native window).
 
-    Old approach trimmed by ``_COMMITTED_SAMPLES`` (sample-based dedup).
-    Now we use word-timestamp dedup so we only need to cap buffer size.
+    Adjusts ``_COMMITTED_END_S`` so it remains a valid position within the
+    (smaller) buffer.
     """
-    global _CONTEXT_BUFFER, _BUFFER_START_TIME
-    MAX_SAMPLES = SAMPLE_RATE * 30  # 30 s max — Whisper's native window
+    global _CONTEXT_BUFFER, _COMMITTED_END_S
+    MAX_SAMPLES = SAMPLE_RATE * 30
     if len(_CONTEXT_BUFFER) > MAX_SAMPLES:
         trim_count = len(_CONTEXT_BUFFER) - MAX_SAMPLES
         trimmed_s = trim_count / SAMPLE_RATE
         _CONTEXT_BUFFER = _CONTEXT_BUFFER[trim_count:]
-        _BUFFER_START_TIME += trimmed_s
+        _COMMITTED_END_S = max(0.0, _COMMITTED_END_S - trimmed_s)
 
 
 # ---------------------------------------------------------------------------
@@ -175,7 +195,7 @@ def _download_model(repo_id: str) -> str:
 
 def load_model() -> None:
     """Load the Whisper model (lazy, called on first audio)."""
-    global _MODEL
+    global _MODEL, _TRANSCRIBE_KWARGS
     if _MODEL is not None:
         return
 
@@ -188,7 +208,9 @@ def load_model() -> None:
         import mlx_whisper
 
         # Transcription parameters tuned for maximum fidelity (EN + DE).
-        # See docs/whisper-fidelity-research.md for rationale.
+        # ``initial_prompt`` and ``clip_timestamps`` are mutated per-call
+        # in ``transcribe_buffer()`` — see that function for the streaming
+        # architecture.
         _TRANSCRIBE_KWARGS = {
             "path_or_hf_repo": WHISPER_MODEL,
             # bilingual initial_prompt primes the tokenizer for correct
@@ -225,49 +247,66 @@ def load_model() -> None:
 
 
 def transcribe_buffer() -> None:
-    """Transcribe and deduplicate — only send words after the last committed time.
+    """Transcribe only the NEW portion of the buffer using ``clip_timestamps``.
 
-    Uses ``word_timestamps`` from Whisper to compare absolute word positions
-    against ``_COMMITTED_ABS_END_S``. Words already sent on a previous
-    iteration are silently skipped.
+    The full buffer is passed to the encoder (full acoustic context), but the
+    decoder starts at ``_COMMITTED_END_S`` and skips already-processed audio.
+    Each audio region is decoded exactly ONCE, so word timestamps are stable.
+
+    ``_LAST_TEXT`` is fed as ``initial_prompt`` to give the model cross-chunk
+    linguistic context (compensates for ``condition_on_previous_text=False``).
     """
-    global _COMMITTED_ABS_END_S
+    global _COMMITTED_END_S, _LAST_TEXT, _TRANSCRIBE_KWARGS
 
-    if len(_CONTEXT_BUFFER) < SAMPLE_RATE * 0.5:  # need at least 0.5 s
+    if len(_CONTEXT_BUFFER) < int(SAMPLE_RATE * 0.5):  # need at least 0.5 s
+        return
+
+    buffer_duration = len(_CONTEXT_BUFFER) / SAMPLE_RATE
+
+    # Nothing new to decode yet
+    if _COMMITTED_END_S >= buffer_duration - 0.15:
         return
 
     audio_array = np.array(_CONTEXT_BUFFER, dtype=np.float32)
-    result = _MODEL(audio_array)  # already set by load_model
 
-    # Collect every word with its absolute start/end time
-    all_words: list[dict[str, float | str]] = []
+    # Tell Whisper to decode only the unprocessed region
+    _TRANSCRIBE_KWARGS["clip_timestamps"] = [_COMMITTED_END_S, buffer_duration + 1.0]
+
+    # Give the model linguistic context from the last transcription
+    if _LAST_TEXT:
+        _TRANSCRIBE_KWARGS["initial_prompt"] = f"{_INITIAL_PROMPT}\n{_LAST_TEXT}"
+    else:
+        _TRANSCRIBE_KWARGS["initial_prompt"] = _INITIAL_PROMPT
+
+    result = _MODEL(audio_array)
+
+    # Collect new words (all in the decoded region are genuinely new)
+    words: list[dict[str, float | str]] = []
     for seg in result.get("segments", []):
         for w in seg.get("words", []):
             text: str = w.get("word", "").strip()
             if text:
-                all_words.append({
+                words.append({
                     "word": text,
-                    "start": _BUFFER_START_TIME + w.get("start", 0.0),
-                    "end": _BUFFER_START_TIME + w.get("end", 0.0),
+                    "start": w.get("start", 0.0),
+                    "end": w.get("end", 0.0),
                 })
 
-    if not all_words:
-        return
-
-    # Filter: only words starting after the last committed end time
-    # A small tolerance (150 ms) avoids flickering at the boundary
-    tolerance = 0.15
-    new_words = [w for w in all_words if w["start"] > _COMMITTED_ABS_END_S - tolerance]  # type: ignore[operator]
-
-    if not new_words:
+    if not words:
+        # No speech detected in this region — advance past it
+        _COMMITTED_END_S = buffer_duration
         return
 
     # Advance the committed end
-    new_end = max(w["end"] for w in new_words)  # type: ignore[type-var]
-    if new_end > _COMMITTED_ABS_END_S:
-        _COMMITTED_ABS_END_S = new_end
+    new_end = max(w["end"] for w in words)  # type: ignore[type-var]
+    if new_end > _COMMITTED_END_S:
+        _COMMITTED_END_S = new_end
 
-    new_text = " ".join(str(w["word"]) for w in new_words)
+    new_text = " ".join(str(w["word"]) for w in words)
+
+    # Keep last ~200 chars for context conditioning
+    _LAST_TEXT = new_text[-200:]
+
     send({
         "type": "transcription",
         "text": new_text,
@@ -297,10 +336,10 @@ def main() -> None:
             break
 
         elif msg_type == "reset":
-            global _CONTEXT_BUFFER, _COMMITTED_ABS_END_S, _BUFFER_START_TIME
+            global _CONTEXT_BUFFER, _COMMITTED_END_S, _LAST_TEXT
             _CONTEXT_BUFFER = []
-            _COMMITTED_ABS_END_S = 0.0
-            _BUFFER_START_TIME = 0.0
+            _COMMITTED_END_S = 0.0
+            _LAST_TEXT = ""
             send({"type": "status", "state": "ready", "message": "Context reset"})
 
         elif msg_type == "audio":
