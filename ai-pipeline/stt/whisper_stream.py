@@ -49,11 +49,13 @@ import tqdm  # for custom download progress bar
 WHISPER_MODEL = "mlx-community/whisper-large-v3-turbo"
 CHUNK_DURATION_S = 2.0  # expected audio chunk duration
 SAMPLE_RATE = 16000
-OVERLAP_S = 0.5  # overlap between consecutive chunks
+OVERLAP_S = 1.0  # overlap between consecutive chunks (matches Rust AudioConfig)
 
 # Streaming state: accumulate audio and track which parts are transcribed
 _CONTEXT_BUFFER: list[float] = []  # mono float samples
-_COMMITTED_SAMPLES = 0  # number of samples already committed as final text
+# Timestamp-based dedup (replaces old sample-based _COMMITTED_SAMPLES)
+_BUFFER_START_TIME: float = 0.0   # absolute time of first sample in buffer (s)
+_COMMITTED_ABS_END_S: float = 0.0 # abs end time of last word sent to frontend
 _MODEL = None  # lazy-loaded whisper model
 
 
@@ -106,14 +108,18 @@ def append_to_context(chunk: np.ndarray) -> None:
 
 
 def trim_context() -> None:
-    """Drop committed samples from the context buffer to avoid unbounded growth."""
-    global _CONTEXT_BUFFER, _COMMITTED_SAMPLES
-    if _COMMITTED_SAMPLES > 0:
-        if _COMMITTED_SAMPLES >= len(_CONTEXT_BUFFER):
-            _CONTEXT_BUFFER = []
-        else:
-            _CONTEXT_BUFFER = _CONTEXT_BUFFER[_COMMITTED_SAMPLES:]
-        _COMMITTED_SAMPLES = 0
+    """Keep buffer bounded at 30 s; advance start time so timestamps stay consistent.
+
+    Old approach trimmed by ``_COMMITTED_SAMPLES`` (sample-based dedup).
+    Now we use word-timestamp dedup so we only need to cap buffer size.
+    """
+    global _CONTEXT_BUFFER, _BUFFER_START_TIME
+    MAX_SAMPLES = SAMPLE_RATE * 30  # 30 s max — Whisper's native window
+    if len(_CONTEXT_BUFFER) > MAX_SAMPLES:
+        trim_count = len(_CONTEXT_BUFFER) - MAX_SAMPLES
+        trimmed_s = trim_count / SAMPLE_RATE
+        _CONTEXT_BUFFER = _CONTEXT_BUFFER[trim_count:]
+        _BUFFER_START_TIME += trimmed_s
 
 
 # ---------------------------------------------------------------------------
@@ -219,31 +225,52 @@ def load_model() -> None:
 
 
 def transcribe_buffer() -> None:
-    """Transcribe the uncommitted portion of the context buffer."""
-    global _COMMITTED_SAMPLES
+    """Transcribe and deduplicate — only send words after the last committed time.
 
-    if len(_CONTEXT_BUFFER) < SAMPLE_RATE * 0.5:  # need at least 0.5s
+    Uses ``word_timestamps`` from Whisper to compare absolute word positions
+    against ``_COMMITTED_ABS_END_S``. Words already sent on a previous
+    iteration are silently skipped.
+    """
+    global _COMMITTED_ABS_END_S
+
+    if len(_CONTEXT_BUFFER) < SAMPLE_RATE * 0.5:  # need at least 0.5 s
         return
 
     audio_array = np.array(_CONTEXT_BUFFER, dtype=np.float32)
     result = _MODEL(audio_array)  # already set by load_model
 
-    # Combine all segment texts
-    full_text = " ".join(seg["text"].strip() for seg in result.get("segments", []) if seg.get("text", "").strip())
+    # Collect every word with its absolute start/end time
+    all_words: list[dict[str, float | str]] = []
+    for seg in result.get("segments", []):
+        for w in seg.get("words", []):
+            text: str = w.get("word", "").strip()
+            if text:
+                all_words.append({
+                    "word": text,
+                    "start": _BUFFER_START_TIME + w.get("start", 0.0),
+                    "end": _BUFFER_START_TIME + w.get("end", 0.0),
+                })
 
-    if not full_text:
+    if not all_words:
         return
 
-    # Send partial if we have more context than committed
-    samples_covered = int(len(audio_array))
-    _COMMITTED_SAMPLES = samples_covered
+    # Filter: only words starting after the last committed end time
+    # A small tolerance (150 ms) avoids flickering at the boundary
+    tolerance = 0.15
+    new_words = [w for w in all_words if w["start"] > _COMMITTED_ABS_END_S - tolerance]  # type: ignore[operator]
 
-    # We send is_final: true since we transcribe the whole buffer each time
-    # In v0.2 this is sufficient. Future versions can implement proper
-    # word-level streaming with partials.
+    if not new_words:
+        return
+
+    # Advance the committed end
+    new_end = max(w["end"] for w in new_words)  # type: ignore[type-var]
+    if new_end > _COMMITTED_ABS_END_S:
+        _COMMITTED_ABS_END_S = new_end
+
+    new_text = " ".join(str(w["word"]) for w in new_words)
     send({
         "type": "transcription",
-        "text": full_text,
+        "text": new_text,
         "is_final": True,
         "timestamp": int(time.time() * 1000),
     })
@@ -270,9 +297,10 @@ def main() -> None:
             break
 
         elif msg_type == "reset":
-            global _CONTEXT_BUFFER, _COMMITTED_SAMPLES
+            global _CONTEXT_BUFFER, _COMMITTED_ABS_END_S, _BUFFER_START_TIME
             _CONTEXT_BUFFER = []
-            _COMMITTED_SAMPLES = 0
+            _COMMITTED_ABS_END_S = 0.0
+            _BUFFER_START_TIME = 0.0
             send({"type": "status", "state": "ready", "message": "Context reset"})
 
         elif msg_type == "audio":
