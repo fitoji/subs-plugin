@@ -166,6 +166,42 @@ pub fn detect_silence(samples: &[f32], threshold: f32) -> bool {
 }
 
 // ---------------------------------------------------------------------------
+// Audio pre-processing filters (DC removal + high-pass)
+// ---------------------------------------------------------------------------
+
+/// Remove DC offset from mono f32 samples by subtracting the mean.
+pub fn dc_remove(samples: &mut [f32]) {
+    if samples.is_empty() {
+        return;
+    }
+    let mean: f32 = samples.iter().sum::<f32>() / samples.len() as f32;
+    for s in samples.iter_mut() {
+        *s -= mean;
+    }
+}
+
+/// First-order IIR high-pass filter, cutoff ~80 Hz.
+///
+/// y[n] = α · (y[n-1] + x[n] - x[n-1]),  α = RC / (RC + dt)
+/// where RC = 1 / (2π · f_c)  and  dt = 1 / sr.
+pub fn high_pass_iir(samples: &mut [f32], cutoff_hz: f32, sr: u32) {
+    if samples.is_empty() {
+        return;
+    }
+    let rc = 1.0 / (2.0 * std::f32::consts::PI * cutoff_hz);
+    let dt = 1.0 / sr as f32;
+    let alpha = rc / (rc + dt);
+    let mut prev_x = 0.0;
+    let mut prev_y = 0.0;
+    for x in samples.iter_mut() {
+        let y = alpha * (prev_y + *x - prev_x);
+        prev_x = *x;
+        prev_y = y;
+        *x = y;
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Ring buffer with overlap
 // ---------------------------------------------------------------------------
 
@@ -465,12 +501,17 @@ impl AudioCapture {
         }
 
         // Resample 48k stereo → 16k mono
-        let mono = resample_and_mix(
+        let mut mono = resample_and_mix(
             input,
             self.config.input_sample_rate,
             self.config.sample_rate,
             self.config.input_channels,
         );
+
+        // Pre-processing: remove DC offset + high-pass @ 80 Hz
+        // Improves SNR and reduces Whisper hallucinations from low-freq noise.
+        dc_remove(&mut mono);
+        high_pass_iir(&mut mono, 80.0, self.config.sample_rate);
 
         // Push to ring buffer
         self.ring.push(&mono);
