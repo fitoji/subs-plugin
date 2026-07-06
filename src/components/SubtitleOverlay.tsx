@@ -107,7 +107,7 @@ export function SubtitleOverlay() {
             startTranscribing();
             await startCapture();
           }}
-          className="cursor-pointer rounded-xl border border-white/20 bg-white/10 px-8 py-3 text-lg text-white/80 backdrop-blur-sm transition-colors hover:bg-white/20 hover:text-white active:bg-white/30"
+          className="cursor-pointer rounded-xl border border-white/30 bg-black/60 px-8 py-3 text-lg text-white backdrop-blur-md transition-colors hover:bg-black/70 active:bg-black/80"
         >
           Empezar a transcribir
         </button>
