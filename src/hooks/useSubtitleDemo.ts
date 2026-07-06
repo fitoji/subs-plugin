@@ -21,16 +21,12 @@ const INTERVAL_MS = 2000;
  * Can be toggled via the `enabled` parameter for fallback/testing mode.
  */
 export function useSubtitleDemo(enabled = true): void {
-  const setCurrentSubtitle = useSubtitleStore((s) => s.setCurrentSubtitle);
-  const clearCurrentSubtitle = useSubtitleStore((s) => s.clearCurrentSubtitle);
+  const addToTranscript = useSubtitleStore((s) => s.addToTranscript);
   const idRef = useRef(0);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
-    if (!enabled) {
-      clearCurrentSubtitle();
-      return;
-    }
+    if (!enabled) return;
 
     // Emit first phrase immediately
     const emitNext = () => {
@@ -44,7 +40,7 @@ export function useSubtitleDemo(enabled = true): void {
         timestamp: Date.now(),
       };
 
-      setCurrentSubtitle(event);
+      addToTranscript(event);
     };
 
     emitNext();
@@ -55,7 +51,6 @@ export function useSubtitleDemo(enabled = true): void {
         clearInterval(intervalRef.current);
         intervalRef.current = null;
       }
-      clearCurrentSubtitle();
     };
-  }, [enabled, setCurrentSubtitle, clearCurrentSubtitle]);
+  }, [enabled, addToTranscript]);
 }

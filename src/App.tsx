@@ -1,10 +1,10 @@
 import { SubtitleOverlay } from './components/SubtitleOverlay';
-import { useSubtitleDemo } from './hooks/useSubtitleDemo';
+import { useSubtitleStream } from './hooks/useSubtitleStream';
 
 function App() {
-  // v0.1: Demo mode enabled by default.
-  // In v0.2+, this will be toggled based on real audio source availability.
-  useSubtitleDemo(true);
+  // Listen for real STT events from the Rust backend (always mounted).
+  // Only fires when the pipeline is active sending events.
+  useSubtitleStream();
 
   return <SubtitleOverlay />;
 }

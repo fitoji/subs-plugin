@@ -1,0 +1,9 @@
+[env]
+# screencapturekit-rs Swift bridge requires macOS 13.0+
+MACOSX_DEPLOYMENT_TARGET = "13.0"
+
+# apple_metal build script looks for Swift compatibility libs at
+# $(xcode-select -p)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/macosx
+# but CLT doesn't have that path.  Point the linker at the real location.
+[target.aarch64-apple-darwin]
+rustflags = ["-C", "link-arg=-L/Library/Developer/CommandLineTools/usr/lib/swift/macosx"]

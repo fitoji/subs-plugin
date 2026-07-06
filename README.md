@@ -16,8 +16,11 @@ Subtitle Overlay is a macOS desktop app that captures system audio, transcribes 
 | Drag window to any position | ✅ | v0.1 |
 | Demo subtitle cycling | ✅ | v0.1 |
 | Settings persistence (font size, opacity, blur) | ✅ | v0.1 |
-| System audio capture (ScreenCaptureKit) | ⏳ | v0.2 |
-| Real-time transcription (Whisper MLX) | ⏳ | v0.2 |
+| System audio capture (ScreenCaptureKit) | 🏗️ | v0.2 |
+| Real-time transcription (Whisper MLX) | 🏗️ | v0.2 |
+| Pipeline status indicator | 🏗️ | v0.2 |
+| Tauri commands (start/stop/status) | 🏗️ | v0.2 |
+| Crash recovery with exponential backoff | 🏗️ | v0.2 |
 | Subtitle translation (LLM) | 🔜 | v0.3 |
 | Interactive dictionary (clickable words) | 🔜 | v0.4 |
 | Vocabulary saving | 🔜 | v0.5 |
@@ -103,14 +106,46 @@ pnpm tauri build
 
 ### Commands
 
+#### Frontend
+
 | Command | Description |
 |---|---|
-| `pnpm dev` | Start Vite dev server (frontend only) |
-| `pnpm tauri dev` | Run app in development mode (hot-reload) |
-| `pnpm tauri build` | Build production .app and .dmg |
-| `pnpm tsc --noEmit` | TypeScript type checking |
-| `cargo build` | Build Rust backend only |
-| `cargo clippy -- -D warnings` | Rust linting |
+| `pnpm dev` | Start Vite dev server (frontend only, http://localhost:1420) |
+| `pnpm build` | TypeScript check + Vite production build |
+| `pnpm tsc --noEmit` | TypeScript type checking only |
+| `pnpm lint` | Run linter (if configured) |
+| `pnpm prettier --check src/` | Check code formatting |
+| `pnpm prettier --write src/` | Format all source files |
+
+#### Rust (Tauri backend)
+
+| Command | Description |
+|---|---|
+| `cargo check` | Fast compilation check (no binary output) |
+| `cargo build` | Build debug binary |
+| `cargo build --release` | Build release binary |
+| `cargo test` | Run all Rust unit tests |
+| `cargo test -- --nocapture` | Run tests with stdout visible (debug prints) |
+| `cargo test audio::tests` | Run only audio module tests |
+| `cargo clippy -- -D warnings` | Lint + deny warnings |
+| `cargo fmt` | Format Rust code |
+
+#### Tauri
+
+| Command | Description |
+|---|---|
+| `pnpm tauri dev` | Run app in development mode (hot-reload frontend + Rust) |
+| `pnpm tauri build` | Build production `.app` and `.dmg` |
+| `pnpm tauri icon src-tauri/icons/icon.png` | Regenerate all icon formats from source PNG |
+| `pnpm tauri info` | Diagnostics: Tauri version, platform, toolchain |
+
+#### Python sidecar (v0.2+)
+
+| Command | Description |
+|---|---|
+| `pip install -r ai-pipeline/stt/requirements.txt` | Install Whisper MLX + numpy |
+| `echo '{"type":"shutdown"}' \| python3 ai-pipeline/stt/whisper_stream.py` | Verify sidecar starts and shuts down cleanly |
+| `python3 -c "import mlx_whisper; print('ok')"` | Verify Whisper MLX installed correctly |
 
 ### Project Structure
 
@@ -118,28 +153,40 @@ pnpm tauri build
 subtitle-overlay/
 ├── src/                          # Frontend (React + TypeScript)
 │   ├── components/
-│   │   └── SubtitleOverlay.tsx   # Overlay component
+│   │   └── SubtitleOverlay.tsx   # Overlay + status indicator
 │   ├── hooks/
-│   │   └── useSubtitleDemo.ts    # Demo subtitle source
+│   │   ├── useSubtitleDemo.ts    # Demo subtitle source (v0.1)
+│   │   └── useSubtitleStream.ts  # Tauri IPC listener for real STT (v0.2)
 │   ├── store/
-│   │   ├── subtitleStore.ts      # Subtitle state (Zustand)
+│   │   ├── subtitleStore.ts      # Subtitle state + pipeline status (Zustand)
 │   │   └── settingsStore.ts      # Settings state (persisted)
 │   ├── types/
 │   │   └── subtitle.ts           # SubtitleEvent + SystemEvent contracts
 │   ├── styles/
 │   │   └── globals.css           # TailwindCSS v4 config
-│   ├── App.tsx
+│   ├── App.tsx                   # Root: demo ↔ stream toggle
 │   └── main.tsx
 ├── src-tauri/                    # Backend (Rust + Tauri v2)
 │   ├── src/
 │   │   ├── main.rs               # Entry point
-│   │   ├── lib.rs                 # App builder
-│   │   └── window.rs             # Window configuration
+│   │   ├── lib.rs                # App builder, commands, plugins
+│   │   ├── window.rs             # Window configuration
+│   │   ├── audio/
+│   │   │   └── mod.rs            # ScreenCaptureKit capture, resample, VAD (v0.2)
+│   │   ├── stt/
+│   │   │   └── mod.rs            # Sidecar lifecycle, JSON Lines protocol (v0.2)
+│   │   ├── events.rs             # Tauri IPC emit helpers (v0.2)
+│   │   └── commands/
+│   │       └── mod.rs            # start/stop/status commands (v0.2)
 │   ├── capabilities/
-│   │   └── default.json          # Tauri v2 permissions
+│   │   └── default.json          # Tauri v2 permissions (+ shell:default)
+│   ├── entitlements.plist        # macOS audio capture entitlements (v0.2)
 │   ├── Cargo.toml
 │   └── tauri.conf.json
-├── ai-pipeline/                  # v0.2+: Python MLX processes
+├── ai-pipeline/                  # Python MLX processes
+│   └── stt/
+│       ├── whisper_stream.py     # Whisper MLX sidecar (v0.2)
+│       └── requirements.txt      # Python dependencies (v0.2)
 ├── docs/
 │   ├── subtitle-overlay-spec.md  # Full product specification (Spanish)
 │   └── decisions/                # Architecture Decision Records
@@ -186,7 +233,7 @@ For complete architecture details, see the [spec](subtitle-overlay-spec.md) (Spa
 | Version | Focus | Key Milestone |
 |---|---|---|
 | ✅ **v0.1** | Overlay base | Transparent, always-on-top, draggable, demo subtitles |
-| 🔜 **v0.2** | Audio + Whisper | Real-time transcription from system audio |
+| 🏗️ **v0.2** | Audio + Whisper | ScreenCaptureKit capture, Whisper MLX streaming, status indicator, crash recovery |
 | 🔜 **v0.3** | Translation | Dual subtitles (original + translation) |
 | 🔜 **v0.4** | Dictionary | Clickable words with definitions |
 | 🔜 **v0.5** | Vocabulary | Saved words with review list |
