@@ -30,6 +30,7 @@ import traceback
 from typing import Optional
 
 import numpy as np
+import tqdm  # for custom download progress bar
 
 
 # ---------------------------------------------------------------------------
@@ -42,7 +43,7 @@ import numpy as np
 #   small  → better quality, slightly slower
 #   medium → great quality, needs ~5 GB RAM
 #   large  → best quality, needs ~10 GB RAM
-WHISPER_MODEL = "mlx-community/whisper-base"
+WHISPER_MODEL = "mlx-community/whisper-base-mlx"
 CHUNK_DURATION_S = 2.0  # expected audio chunk duration
 SAMPLE_RATE = 16000
 OVERLAP_S = 0.5  # overlap between consecutive chunks
@@ -116,6 +117,26 @@ def trim_context() -> None:
 # Whisper transcription
 # ---------------------------------------------------------------------------
 
+class _ProgressTqdm(tqdm.tqdm):  # type: ignore[name-defined]
+    """Custom tqdm that emits download percentage to the sidecar channel.
+
+    Pass as ``tqdm_class`` to ``snapshot_download`` or ``hf_hub_download``.
+    """
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self._last_pct = -1
+
+    def update(self, n: int = 1) -> bool | None:
+        result = super().update(n)
+        if self.total and self.total > 0:
+            pct = int(self.n / self.total * 100)
+            if pct != self._last_pct:
+                self._last_pct = pct
+                send({"type": "status", "state": "loading", "message": f"Downloading model… {pct}%"})
+        return result
+
+
 def _download_model(repo_id: str) -> str:
     """Download the model from HuggingFace with progress reporting.
 
@@ -124,19 +145,9 @@ def _download_model(repo_id: str) -> str:
     from huggingface_hub import snapshot_download
     from huggingface_hub.utils import HfHubHTTPError
 
-    last_pct = -1
-
-    def _on_progress(current: int, total: int, status: str) -> None:
-        nonlocal last_pct
-        if total > 0:
-            pct = int(current / total * 100)
-            if pct != last_pct:  # avoid flooding stdout
-                last_pct = pct
-                send({"type": "status", "state": "loading", "message": f"Downloading model… {pct}%"})
-
     send({"type": "status", "state": "loading", "message": "Downloading model…"})
     try:
-        return snapshot_download(repo_id=repo_id, callback=_on_progress)
+        return snapshot_download(repo_id=repo_id, tqdm_class=_ProgressTqdm)
     except HfHubHTTPError as exc:
         send({"type": "status", "state": "error", "message": f"Model download failed: {exc}"})
         sys.exit(2)
