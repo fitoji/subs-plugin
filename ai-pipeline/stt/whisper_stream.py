@@ -38,11 +38,14 @@ import tqdm  # for custom download progress bar
 # ---------------------------------------------------------------------------
 
 # ── Model config ──────────────────────────────────────────────────────────
-#   tiny   → fastest, least accurate
-#   base   → good balance speed/accuracy on Apple Silicon
-#   small  → better quality, slightly slower
-#   medium → great quality, needs ~5 GB RAM
-#   large  → best quality, needs ~10 GB RAM
+#   tiny           → fastest, least accurate
+#   base-mlx       → good balance speed/accuracy on Apple Silicon
+#   small          → better quality, slightly slower
+#   medium         → great quality, needs ~5 GB RAM
+#   large-v3-mlx   → best quality (non-turbo), ~3 GB RAM, 3x slower
+#   large-v3-turbo → best quality/speed trade-off (current)
+#   large-v3-turbo-8bit → faster, less RAM, slight quality loss
+#   large-v3-turbo-asr-fp16 → INCOMPATIBLE with mlx-whisper 0.4.3
 WHISPER_MODEL = "mlx-community/whisper-large-v3-turbo"
 CHUNK_DURATION_S = 2.0  # expected audio chunk duration
 SAMPLE_RATE = 16000
@@ -178,16 +181,28 @@ def load_model() -> None:
         # Step 2: import and configure
         import mlx_whisper
 
-        # Transcription parameters: no forced language → Whisper auto-detects
-        # (English, Spanish, German, French, etc. — works for any language
-        #  the multilingual model supports).
+        # Transcription parameters tuned for maximum fidelity (EN + DE).
+        # See docs/whisper-fidelity-research.md for rationale.
         _TRANSCRIBE_KWARGS = {
             "path_or_hf_repo": WHISPER_MODEL,
-            "temperature": 0.0,                        # Deterministic — fewer hallucinations
+            # bilingual initial_prompt primes the tokenizer for correct
+            # capitalization and vocabulary in English and German
+            "initial_prompt": (
+                "Hello, how are you? Guten Tag, wie geht es Ihnen? "
+                "The weather is nice. Das Wetter ist schön."
+            ),
+            # 3-step fallback: greedy first, warmer on low confidence
+            "temperature": (0.0, 0.2, 0.4),
             "condition_on_previous_text": False,       # Avoid repetition loops in streaming mode
             "no_speech_threshold": 0.35,               # More aggressive at filtering silence noise
-            "compression_ratio_threshold": 2.0,        # Slightly stricter on repetitive text
+            # 2.4 is the Whisper default — 2.0 was too strict for
+            # German compound words (e.g. Donaudampfschifffahrt)
+            "compression_ratio_threshold": 2.4,
             "logprob_threshold": -0.5,                 # Reject low-probability (noisy) segments
+            # Kills the "text during silence" hallucination bug
+            "hallucination_silence_threshold": 2.0,
+            # Needed for Phase 2 dedup — will filter by word start times
+            "word_timestamps": True,
         }
 
         _MODEL = lambda audio: mlx_whisper.transcribe(
