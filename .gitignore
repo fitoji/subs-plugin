@@ -1,0 +1,45 @@
+# Rust / Cargo
+src-tauri/target/
+src-tauri/Cargo.lock
+
+# Node / pnpm
+node_modules/
+dist/
+pnpm-lock.yaml
+
+# Build artifacts
+*.app
+*.dmg
+*.tar.gz
+
+# macOS
+.DS_Store
+
+# IDE
+.idea/
+*.swp
+*.swo
+*~
+
+# Env
+.env
+.env.local
+
+# Auto-installed agent skills (tooling-generated, machine-specific)
+.agents/
+
+# Skill registry cache
+.atl/.skill-registry.cache.json
+
+# Tauri auto-generated schemas
+src-tauri/gen/
+
+# Auto-generated icons (regenerate with `pnpm tauri icon src-tauri/icons/icon.png`)
+src-tauri/icons/*.png
+src-tauri/icons/*.icns
+src-tauri/icons/*.ico
+src-tauri/icons/android/
+src-tauri/icons/ios/
+src-tauri/icons/StoreLogo.png
+src-tauri/icons/Square*.png
+!src-tauri/icons/icon.png

@@ -1,0 +1,14 @@
+{
+  "identifier": "default",
+  "description": "Default capabilities for Subtitle Overlay",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "core:window:default",
+    "core:window:allow-close",
+    "core:window:allow-set-size",
+    "core:window:allow-set-position",
+    "core:window:allow-show",
+    "core:window:allow-hide"
+  ]
+}

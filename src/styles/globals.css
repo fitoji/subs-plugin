@@ -1,0 +1,28 @@
+@import 'tailwindcss';
+
+@theme {
+  --color-overlay-bg: rgba(0, 0, 0, 0.5);
+  --color-overlay-text: #ffffff;
+  --font-size-subtitle: 28px;
+  --radius-overlay: 12px;
+  --blur-overlay: 16px;
+  --max-width-overlay: 600px;
+}
+
+/*
+ * Overlay window styling.
+ * The entire window is transparent; the overlay div is the visible element.
+ */
+
+html,
+body,
+#root {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: transparent;
+  user-select: none;
+  -webkit-user-select: none;
+}
