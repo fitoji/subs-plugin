@@ -116,6 +116,32 @@ def trim_context() -> None:
 # Whisper transcription
 # ---------------------------------------------------------------------------
 
+def _download_model(repo_id: str) -> str:
+    """Download the model from HuggingFace with progress reporting.
+
+    Returns the local cache path. If already cached, returns immediately.
+    """
+    from huggingface_hub import snapshot_download
+    from huggingface_hub.utils import HfHubHTTPError
+
+    last_pct = -1
+
+    def _on_progress(current: int, total: int, status: str) -> None:
+        nonlocal last_pct
+        if total > 0:
+            pct = int(current / total * 100)
+            if pct != last_pct:  # avoid flooding stdout
+                last_pct = pct
+                send({"type": "status", "state": "loading", "message": f"Downloading model… {pct}%"})
+
+    send({"type": "status", "state": "loading", "message": "Downloading model…"})
+    try:
+        return snapshot_download(repo_id=repo_id, callback=_on_progress)
+    except HfHubHTTPError as exc:
+        send({"type": "status", "state": "error", "message": f"Model download failed: {exc}"})
+        sys.exit(2)
+
+
 def load_model() -> None:
     """Load the Whisper model (lazy, called on first audio)."""
     global _MODEL
@@ -124,6 +150,10 @@ def load_model() -> None:
 
     send({"type": "status", "state": "loading", "message": f"Loading Whisper {WHISPER_MODEL} model…"})
     try:
+        # Step 1: pre-download the model with progress tracking
+        _download_model(WHISPER_MODEL)
+
+        # Step 2: import and configure
         import mlx_whisper
 
         # Transcription parameters: no forced language → Whisper auto-detects

@@ -59,7 +59,9 @@ export function useSubtitleStream() {
         if (cancelled) return;
         const { type: _type, status, message } = event.payload;
         const mapped = mapStatus(status);
-        setStatus(mapped, mapped === 'error' ? message ?? null : null);
+        const errMsg = mapped === 'error' ? message ?? null : null;
+        const infoMsg = mapped !== 'error' ? message ?? null : null;
+        setStatus(mapped, errMsg, infoMsg);
 
         if (message) {
           console.debug(`[pipeline] ${_type}: ${status} — ${message}`);

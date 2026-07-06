@@ -49,6 +49,7 @@ export function SubtitleOverlay() {
   const transcript = useSubtitleStore((s) => s.transcript);
   const status = useSubtitleStore((s) => s.status);
   const errorMessage = useSubtitleStore((s) => s.errorMessage);
+  const statusMessage = useSubtitleStore((s) => s.statusMessage);
   const isTranscribing = useSubtitleStore((s) => s.isTranscribing);
   const startTranscribing = useSubtitleStore((s) => s.startTranscribing);
   const { fontSize, opacity, backgroundBlur, maxWidth } = useSettingsStore();
@@ -203,7 +204,9 @@ export function SubtitleOverlay() {
           <span className="text-xs text-white/40">Recording…</span>
         )}
         {status === 'processing' && (
-          <span className="text-xs text-white/60">Processing…</span>
+          <span className="text-xs text-white/60">
+            {statusMessage || 'Processing…'}
+          </span>
         )}
         {status === 'error' && (
           <span className="text-xs text-red-400">
