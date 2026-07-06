@@ -121,10 +121,15 @@ export function SubtitleOverlay() {
 
   const hasTranscript = transcript.length > 0;
 
+  const copyTranscript = () => {
+    const text = transcript.map((e) => e.text).join('\n');
+    navigator.clipboard.writeText(text).catch(console.error);
+  };
+
   return (
     <div
       data-tauri-drag-region
-      className="flex h-screen w-screen cursor-pointer flex-col"
+      className="relative flex h-screen w-screen cursor-pointer flex-col"
       onClick={() => {
         if (status === 'listening' || status === 'processing') {
           stopCapture();
@@ -133,6 +138,32 @@ export function SubtitleOverlay() {
         }
       }}
     >
+      {/* Copy button — top-right, only when there's transcript */}
+      {hasTranscript && (
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            copyTranscript();
+          }}
+          className="absolute right-3 top-3 z-10 rounded-lg p-2 text-white/30 transition-colors hover:bg-white/10 hover:text-white/60"
+          title="Copiar todo el texto"
+        >
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            className="h-5 w-5"
+          >
+            <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+          </svg>
+        </button>
+      )}
+
       {/* Scrollable transcript */}
       <div
         ref={scrollRef}
@@ -152,7 +183,7 @@ export function SubtitleOverlay() {
             {transcript.map((entry) => (
               <p
                 key={entry.id}
-                className="m-0 select-none leading-relaxed text-white"
+                className="m-0 select-text leading-relaxed text-white"
                 style={{
                   fontSize: `${fontSize}px`,
                   textShadow: '0 1px 3px rgba(0,0,0,0.9), 0 0 2px rgba(0,0,0,0.6)',
