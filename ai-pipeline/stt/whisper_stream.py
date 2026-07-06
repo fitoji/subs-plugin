@@ -126,12 +126,12 @@ def load_model() -> None:
     try:
         import mlx_whisper
 
-        # Transcription parameters tuned for cleaner output
+        # Transcription parameters: no forced language → Whisper auto-detects
+        # (English, Spanish, German, French, etc. — works for any language
+        #  the multilingual model supports).
         _TRANSCRIBE_KWARGS = {
             "path_or_hf_repo": WHISPER_MODEL,
-            "language": "es",                          # Force Spanish — avoids English auto-detect artifacts
             "temperature": 0.0,                        # Deterministic — fewer hallucinations
-            "initial_prompt": "Esto es una conversación en español.",  # Guide sentence structure
             "condition_on_previous_text": False,       # Avoid repetition loops in streaming mode
             "no_speech_threshold": 0.35,               # More aggressive at filtering silence noise
             "compression_ratio_threshold": 2.0,        # Slightly stricter on repetitive text
