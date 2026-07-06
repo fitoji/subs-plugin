@@ -43,7 +43,7 @@ import tqdm  # for custom download progress bar
 #   small  → better quality, slightly slower
 #   medium → great quality, needs ~5 GB RAM
 #   large  → best quality, needs ~10 GB RAM
-WHISPER_MODEL = "mlx-community/whisper-base-mlx"
+WHISPER_MODEL = "mlx-community/whisper-large-v3-turbo-asr-fp16"
 CHUNK_DURATION_S = 2.0  # expected audio chunk duration
 SAMPLE_RATE = 16000
 OVERLAP_S = 0.5  # overlap between consecutive chunks
@@ -140,10 +140,21 @@ class _ProgressTqdm(tqdm.tqdm):  # type: ignore[name-defined]
 def _download_model(repo_id: str) -> str:
     """Download the model from HuggingFace with progress reporting.
 
-    Returns the local cache path. If already cached, returns immediately.
+    Returns the local cache path. If already cached, returns immediately
+    without emitting progress events.
     """
-    from huggingface_hub import snapshot_download
+    from huggingface_hub import snapshot_download, constants
     from huggingface_hub.utils import HfHubHTTPError
+    import os, pathlib
+
+    # Check if already cached — skip progress bar if so
+    cache_dir = pathlib.Path(constants.HF_HUB_CACHE)
+    # repo_id "org/name" → "models--org--name"
+    cache_name = "models--" + repo_id.replace("/", "--")
+    snapshot_dir = cache_dir / cache_name / "snapshots"
+    if snapshot_dir.is_dir() and any(snapshot_dir.iterdir()):
+        # Cached — download silently, no progress events
+        return snapshot_download(repo_id=repo_id)
 
     send({"type": "status", "state": "loading", "message": "Downloading model…"})
     try:

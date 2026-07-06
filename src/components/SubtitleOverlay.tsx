@@ -165,15 +165,15 @@ export function SubtitleOverlay() {
         </button>
       )}
 
-      {/* Scrollable transcript */}
+      {/* Scrollable transcript — background always on in chat mode */}
       <div
         ref={scrollRef}
         className="flex-1 overflow-y-auto px-4 py-4"
         style={{
           scrollBehavior: 'smooth',
-          backgroundColor: hasTranscript ? `rgba(0, 0, 0, ${opacity})` : undefined,
-          backdropFilter: hasTranscript ? `blur(${backgroundBlur}px)` : undefined,
-          WebkitBackdropFilter: hasTranscript ? `blur(${backgroundBlur}px)` : undefined,
+          backgroundColor: `rgba(0, 0, 0, ${opacity})`,
+          backdropFilter: `blur(${backgroundBlur}px)`,
+          WebkitBackdropFilter: `blur(${backgroundBlur}px)`,
         }}
       >
         {hasTranscript && (
@@ -194,6 +194,15 @@ export function SubtitleOverlay() {
                 {entry.text}
               </p>
             ))}
+          </div>
+        )}
+
+        {/* Centered loading message when no transcript yet (model loading, etc.) */}
+        {!hasTranscript && status === 'processing' && statusMessage && (
+          <div className="flex h-full items-center justify-center">
+            <p className="m-0 text-center text-white/60" style={{ fontSize: `${fontSize * 0.75}px` }}>
+              {statusMessage}
+            </p>
           </div>
         )}
       </div>
