@@ -36,7 +36,13 @@ import numpy as np
 # Configuration
 # ---------------------------------------------------------------------------
 
-WHISPER_MODEL = "mlx-community/whisper-tiny"
+# ── Model config ──────────────────────────────────────────────────────────
+#   tiny   → fastest, least accurate
+#   base   → good balance speed/accuracy on Apple Silicon
+#   small  → better quality, slightly slower
+#   medium → great quality, needs ~5 GB RAM
+#   large  → best quality, needs ~10 GB RAM
+WHISPER_MODEL = "mlx-community/whisper-base"
 CHUNK_DURATION_S = 2.0  # expected audio chunk duration
 SAMPLE_RATE = 16000
 OVERLAP_S = 0.5  # overlap between consecutive chunks
@@ -119,9 +125,22 @@ def load_model() -> None:
     send({"type": "status", "state": "loading", "message": f"Loading Whisper {WHISPER_MODEL} model…"})
     try:
         import mlx_whisper
+
+        # Transcription parameters tuned for cleaner output
+        _TRANSCRIBE_KWARGS = {
+            "path_or_hf_repo": WHISPER_MODEL,
+            "language": "es",                          # Force Spanish — avoids English auto-detect artifacts
+            "temperature": 0.0,                        # Deterministic — fewer hallucinations
+            "initial_prompt": "Esto es una conversación en español.",  # Guide sentence structure
+            "condition_on_previous_text": False,       # Avoid repetition loops in streaming mode
+            "no_speech_threshold": 0.35,               # More aggressive at filtering silence noise
+            "compression_ratio_threshold": 2.0,        # Slightly stricter on repetitive text
+            "logprob_threshold": -0.5,                 # Reject low-probability (noisy) segments
+        }
+
         _MODEL = lambda audio: mlx_whisper.transcribe(
             np.array(audio, dtype=np.float32),
-            path_or_hf_repo=WHISPER_MODEL,
+            **_TRANSCRIBE_KWARGS,
         )
         send({"type": "status", "state": "ready"})
     except Exception as exc:
