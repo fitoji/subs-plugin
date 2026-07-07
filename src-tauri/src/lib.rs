@@ -1,6 +1,7 @@
 mod audio;
 mod commands;
 mod events;
+mod settings;
 mod stt;
 mod window;
 
