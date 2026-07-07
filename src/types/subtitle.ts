@@ -32,6 +32,6 @@ export interface DictionaryLookupResult {
  * Emitted on a separate event channel from subtitle events.
  */
 export type SystemEvent =
-  | { type: 'stt_status'; status: 'listening' | 'processing' | 'error'; message?: string }
+  | { type: 'stt_status'; status: 'listening' | 'processing' | 'error' | 'reloading'; message?: string }
   | { type: 'translator_status'; status: 'ready' | 'error'; message?: string }
   | { type: 'audio_status'; status: 'active' | 'silence' | 'error'; message?: string };
