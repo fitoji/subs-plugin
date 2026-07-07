@@ -1,13 +1,15 @@
 //! Tauri command handlers for the subtitle pipeline.
 
-use std::sync::Arc;
+pub mod settings_commands;
+
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::sync::Mutex;
 
 use tauri::State;
 use tokio::sync::mpsc;
 
-use crate::audio::{AudioCapture, AudioConfig, AudioStatus, create_audio_stream};
+use crate::audio::{create_audio_stream, AudioCapture, AudioConfig, AudioStatus};
 use crate::stt;
 use screencapturekit::stream::sc_stream::SCStream;
 
@@ -71,7 +73,7 @@ pub async fn start_capture(
 
     // ---- 1. Spawn Python sidecar ----
     let (child, rx) =
-        stt::spawn_sidecar(&app).map_err(|e| format!("Failed to spawn sidecar: {e}"))?;
+        stt::spawn_sidecar(&app, None).map_err(|e| format!("Failed to spawn sidecar: {e}"))?;
 
     // ---- 2. Create shared sidecar instance ----
     let instance = stt::SidecarInstance::new(child);
@@ -99,7 +101,9 @@ pub async fn start_capture(
     // ---- 4. Create AudioCapture ----
     let audio_cfg = AudioConfig::default();
     let mut capture = AudioCapture::new(audio_cfg);
-    capture.start().map_err(|e| format!("Failed to start audio capture: {e}"))?;
+    capture
+        .start()
+        .map_err(|e| format!("Failed to start audio capture: {e}"))?;
 
     let capture_arc = Arc::new(Mutex::new(capture));
 
@@ -167,10 +171,7 @@ pub async fn start_capture(
 
 /// Stop the audio capture + STT pipeline and return to demo mode.
 #[tauri::command]
-pub async fn stop_capture(
-    app: tauri::AppHandle,
-    state: State<'_, AppState>,
-) -> Result<(), String> {
+pub async fn stop_capture(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<(), String> {
     if !state.capture_active.load(Ordering::Relaxed) {
         return Ok(());
     }
