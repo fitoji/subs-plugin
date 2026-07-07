@@ -28,6 +28,9 @@ pnpm-lock.yaml
 # Python venv (local Whisper sidecar environment)
 ai-pipeline/stt/.venv/
 
+# Python cache
+__pycache__/
+
 # Auto-installed agent skills (tooling-generated, machine-specific)
 .agents/
 
