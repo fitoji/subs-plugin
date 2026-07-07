@@ -22,7 +22,9 @@ Exit codes:
 Requirements: mlx-whisper, numpy
 """
 
+import argparse
 import json
+import os
 import sys
 import time
 import base64
@@ -31,6 +33,58 @@ from typing import Optional
 
 import numpy as np
 import tqdm  # for custom download progress bar
+
+
+# ---------------------------------------------------------------------------
+# CLI argument parsing
+# ---------------------------------------------------------------------------
+
+def parse_args() -> argparse.Namespace:
+    """Parse CLI arguments. Currently supports ``--config`` for JSON overrides."""
+    parser = argparse.ArgumentParser(
+        description="Whisper MLX sidecar — real-time speech-to-text via Apple MLX."
+    )
+    parser.add_argument(
+        "--config",
+        type=str,
+        help="Path to a JSON config file whose keys override the hardcoded "
+             "_TRANSCRIBE_KWARGS defaults. See the JSON format documented in "
+             "_load_config().",
+    )
+    return parser.parse_args()
+
+
+def load_config(path: str) -> dict:
+    """Read and validate a JSON config file.
+
+    The expected JSON format::
+
+        {
+            "temperature": [0.0, 0.2, 0.4],
+            "beam_size": 5,
+            "language": "auto",
+            "model": "mlx-community/whisper-large-v3-turbo",
+            "no_speech_threshold": 0.35,
+            "compression_ratio_threshold": 2.4,
+            "logprob_threshold": -0.5
+        }
+
+    Returns the parsed dict. The caller merges values via ``dict.update()``
+    so missing keys preserve the hardcoded default.
+
+    Raises ``FileNotFoundError`` if the path does not exist.
+    """
+    if not os.path.isfile(path):
+        raise FileNotFoundError(f"Config file not found: {path}")
+
+    with open(path, "r", encoding="utf-8") as f:
+        cfg = json.load(f)
+
+    # Convert temperature array to tuple if present
+    if "temperature" in cfg and isinstance(cfg["temperature"], list):
+        cfg["temperature"] = tuple(cfg["temperature"])
+
+    return cfg
 
 
 # ---------------------------------------------------------------------------
@@ -193,8 +247,14 @@ def _download_model(repo_id: str) -> str:
         sys.exit(2)
 
 
-def load_model() -> None:
-    """Load the Whisper model (lazy, called on first audio)."""
+def load_model(config_overrides: dict | None = None) -> None:
+    """Load the Whisper model (lazy, called on first audio).
+
+    Args:
+        config_overrides: Optional dict of values from a ``--config`` JSON file.
+                          Each key is merged into ``_TRANSCRIBE_KWARGS`` via
+                          ``.update()`` so missing keys preserve hardcoded defaults.
+    """
     global _MODEL, _TRANSCRIBE_KWARGS
     if _MODEL is not None:
         return
@@ -232,6 +292,11 @@ def load_model() -> None:
             # Needed for Phase 2 dedup — will filter by word start times
             "word_timestamps": True,
         }
+
+        # Apply ``--config`` overrides on top of hardcoded defaults so that
+        # missing JSON keys preserve the default values.
+        if config_overrides:
+            _TRANSCRIBE_KWARGS.update(config_overrides)
 
         _MODEL = lambda audio: mlx_whisper.transcribe(
             np.array(audio, dtype=np.float32),
@@ -322,8 +387,15 @@ def transcribe_buffer() -> None:
 # ---------------------------------------------------------------------------
 
 def main() -> None:
+    args = parse_args()
+
+    # Load optional config overrides from ``--config`` file
+    config_overrides: dict | None = None
+    if args.config:
+        config_overrides = load_config(args.config)
+
     send({"type": "status", "state": "loading", "message": "Initializing Whisper MLX sidecar…"})
-    load_model()
+    load_model(config_overrides)
 
     while True:
         msg = read_line()

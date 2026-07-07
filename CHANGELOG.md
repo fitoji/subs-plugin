@@ -4,6 +4,20 @@ All notable changes to Subtitle Overlay are documented here.
 
 ---
 
+## [0.2.2] — 2026-07-07
+
+### Added
+- **Native macOS menu** — Whisper settings accessible via app menu bar (Model, Language, Temperature, Beam Size, thresholds)
+- **Settings persistence** — parameters saved as TOML to `~/Library/Application Support/subtitle-overlay/settings.user`
+- **Reload Whisper** — kills and re-spawns the Python sidecar with current settings; audio capture (SCStream) stays alive
+- **`--config` CLI arg** — Python sidecar accepts `--config <json>` to override transcription parameters at startup
+- **Reloading status UI** — overlay shows "Reloading Whisper…" centered during sidecar restart
+- **Reset to Defaults** — restores all Whisper parameters to their safe defaults
+
+### Changed
+- **Sidecar re-spawn** — `spawn_sidecar()` now accepts optional `config_path: Option<&Path>` for `--config` argument
+- **Frontend status** — added `'reloading'` to the `stt_status` union type
+
 ## [0.2.1] — 2026-07-06
 
 ### Added

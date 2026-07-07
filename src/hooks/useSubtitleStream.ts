@@ -22,6 +22,7 @@ function mapStatus(raw: string): PipelineStatus {
       return 'listening';
     case 'loading':
     case 'processing':
+    case 'reloading':
       return 'processing';
     case 'error':
     case 'fatal':
@@ -60,7 +61,10 @@ export function useSubtitleStream() {
         const { type: _type, status, message } = event.payload;
         const mapped = mapStatus(status);
         const errMsg = mapped === 'error' ? message ?? null : null;
-        const infoMsg = mapped !== 'error' ? message ?? null : null;
+        // Override status message for reloading state
+        const infoMsg = status === 'reloading'
+          ? 'Reloading Whisper…'
+          : (mapped !== 'error' ? message ?? null : null);
         setStatus(mapped, errMsg, infoMsg);
 
         if (message) {

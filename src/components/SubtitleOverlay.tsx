@@ -207,6 +207,21 @@ export function SubtitleOverlay() {
         )}
       </div>
 
+      {/* Centered reloading overlay — positioned outside the scrollable div */}
+      {status === 'processing' && statusMessage === 'Reloading Whisper…' && (
+        <div className="absolute inset-0 z-20 flex items-center justify-center"
+          style={{
+            backgroundColor: `rgba(0, 0, 0, ${opacity})`,
+            backdropFilter: `blur(${backgroundBlur}px)`,
+            WebkitBackdropFilter: `blur(${backgroundBlur}px)`,
+          }}
+        >
+          <p className="m-0 text-center text-white/60" style={{ fontSize: `${fontSize * 0.75}px` }}>
+            {statusMessage}
+          </p>
+        </div>
+      )}
+
       {/* Status bar — only transient states */}
       <div className="flex items-center justify-center gap-2 px-4 pb-3 pt-1">
         {status === 'listening' && (
