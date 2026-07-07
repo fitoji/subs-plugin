@@ -4,6 +4,7 @@
 //! spawning, stdin JSON Lines protocol, crash recovery with
 //! exponential backoff, and state tracking.
 
+use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -97,8 +98,12 @@ pub enum SttError {
 ///   2. `python3` — system PATH
 pub fn spawn_sidecar(
     app: &AppHandle,
+    config_path: Option<&Path>,
 ) -> Result<
-    (CommandChild, tokio::sync::mpsc::Receiver<tauri_plugin_shell::process::CommandEvent>),
+    (
+        CommandChild,
+        tokio::sync::mpsc::Receiver<tauri_plugin_shell::process::CommandEvent>,
+    ),
     SttError,
 > {
     let script_path = resolve_script_path(app);
@@ -112,11 +117,14 @@ pub fn spawn_sidecar(
         .unwrap_or_else(|| "python3".into());
 
     let shell = app.shell();
-    let command = shell.command(&python_bin).args(["-u", &script_path]);
+    let mut args = vec!["-u".to_string(), script_path];
+    if let Some(cp) = config_path {
+        args.push("--config".to_string());
+        args.push(cp.to_string_lossy().to_string());
+    }
+    let command = shell.command(&python_bin).args(&args);
 
-    let (rx, child) = command
-        .spawn()
-        .map_err(|e| SttError::Io(e.to_string()))?;
+    let (rx, child) = command.spawn().map_err(|e| SttError::Io(e.to_string()))?;
 
     Ok((child, rx))
 }
@@ -165,10 +173,7 @@ impl SidecarInstance {
     pub fn send_audio(&mut self, pcm_bytes: &[u8]) -> Result<(), SttError> {
         let child = self.child.as_mut().ok_or(SttError::NotSpawned)?;
 
-        let b64 = base64::Engine::encode(
-            &base64::engine::general_purpose::STANDARD,
-            pcm_bytes,
-        );
+        let b64 = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, pcm_bytes);
 
         let line = serde_json::json!({
             "type": "audio",
@@ -176,9 +181,8 @@ impl SidecarInstance {
             "sample_rate": 16000,
         });
 
-        let payload = serde_json::to_string(&line)
-            .map_err(|e| SttError::Protocol(e.to_string()))?
-            + "\n";
+        let payload =
+            serde_json::to_string(&line).map_err(|e| SttError::Protocol(e.to_string()))? + "\n";
 
         child
             .write(payload.as_bytes())
@@ -383,7 +387,7 @@ async fn handle_sidecar_crash(
     tokio::time::sleep(Duration::from_secs(wait_s as u64)).await;
 
     // --- Phase 3: re-spawn ---
-    match spawn_sidecar(app) {
+    match spawn_sidecar(app, None) {
         Ok((new_child, new_rx)) => {
             let mut inst = sidecar.lock().unwrap();
             inst.child = Some(new_child);
@@ -411,7 +415,10 @@ fn resolve_script_path(app: &AppHandle) -> String {
     #[cfg(debug_assertions)]
     {
         if let Ok(cwd) = std::env::current_dir() {
-            let path = cwd.join("ai-pipeline").join("stt").join("whisper_stream.py");
+            let path = cwd
+                .join("ai-pipeline")
+                .join("stt")
+                .join("whisper_stream.py");
             if path.exists() {
                 return path.to_string_lossy().to_string();
             }
