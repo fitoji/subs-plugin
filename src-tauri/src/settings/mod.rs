@@ -14,6 +14,9 @@ use serde::{Deserialize, Serialize};
 // Struct
 // ---------------------------------------------------------------------------
 
+/// Wrapper for the settings file path, registered as Tauri managed state.
+pub struct SettingsPath(pub std::path::PathBuf);
+
 /// All tunable Whisper transcription parameters.
 ///
 /// Every field carries `#[serde(default = "…")]` so a hand-edited (or

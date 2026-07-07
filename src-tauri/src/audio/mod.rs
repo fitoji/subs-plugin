@@ -248,7 +248,11 @@ impl RingBuffer {
         if self.buf.len() < self.config.chunk_samples() {
             return None;
         }
-        let chunk: Vec<f32> = self.buf.range(..self.config.chunk_samples()).copied().collect();
+        let chunk: Vec<f32> = self
+            .buf
+            .range(..self.config.chunk_samples())
+            .copied()
+            .collect();
         Some(chunk)
     }
 
@@ -310,9 +314,8 @@ pub fn extract_audio_frames_from_sample(sample: &CMSampleBuffer) -> Option<Vec<f
         }
 
         // SAFETY: ScreenCaptureKit delivers 32-bit float PCM data.
-        let samples: &[f32] = unsafe {
-            std::slice::from_raw_parts(data.as_ptr() as *const f32, data.len() / 4)
-        };
+        let samples: &[f32] =
+            unsafe { std::slice::from_raw_parts(data.as_ptr() as *const f32, data.len() / 4) };
 
         // If the buffer claims 2 channels but the data is actually
         // non-interleaved single-channel, we'd get half the expected
@@ -337,7 +340,8 @@ pub fn extract_audio_frames_from_sample(sample: &CMSampleBuffer) -> Option<Vec<f
             let offset = frame * 4;
             if offset + 4 <= ch_bytes.len() {
                 // SAFETY: raw f32 bytes from CoreMedia audio buffer.
-                let sample_val = unsafe { std::ptr::read(ch_bytes.as_ptr().add(offset) as *const f32) };
+                let sample_val =
+                    unsafe { std::ptr::read(ch_bytes.as_ptr().add(offset) as *const f32) };
                 out.push(sample_val);
             }
         }
@@ -407,7 +411,9 @@ pub fn create_audio_stream(
     );
 
     // 7. Start capture
-    stream.start_capture().map_err(|e| AudioError::Capture(e.to_string()))?;
+    stream
+        .start_capture()
+        .map_err(|e| AudioError::Capture(e.to_string()))?;
 
     Ok(stream)
 }
@@ -562,7 +568,7 @@ mod tests {
         let cfg = test_config();
         assert_eq!(cfg.chunk_samples(), 32000); // 2 s × 16 kHz
         assert_eq!(cfg.overlap_samples(), 8000); // 0.5 s × 16 kHz
-        assert_eq!(cfg.step_samples(), 24000);  // 32000 - 8000
+        assert_eq!(cfg.step_samples(), 24000); // 32000 - 8000
     }
 
     #[test]
