@@ -3,7 +3,7 @@
 //! Uses `screencapturekit-rs` (macOS 13+) to capture system audio output.
 //! Captured audio (48 kHz stereo float) is resampled to 16 kHz mono PCM,
 //! accumulated in a sliding ring buffer, gated by silence detection (RMS VAD),
-//! and flushed as 2 s i16 PCM chunks with 0.5 s overlap.
+//! and flushed as 5 s i16 PCM chunks with 1 s overlap.
 //!
 //! ## Architecture
 //!
@@ -38,9 +38,9 @@ use screencapturekit::stream::configuration::{AudioChannelCount, AudioSampleRate
 pub struct AudioConfig {
     /// Target output sample rate (Hz). Default: 16 000.
     pub sample_rate: u32,
-    /// Window duration in milliseconds. Default: 2000.
+    /// Window duration in milliseconds. Default: 5000.
     pub chunk_ms: u32,
-    /// Overlap between consecutive windows in milliseconds. Default: 500.
+    /// Overlap between consecutive windows in milliseconds. Default: 1000.
     pub overlap_ms: u32,
     /// RMS silence threshold (0.0 – 1.0). Default: 0.02.
     pub silence_threshold: f32,
@@ -566,9 +566,9 @@ mod tests {
     #[test]
     fn test_config_samples() {
         let cfg = test_config();
-        assert_eq!(cfg.chunk_samples(), 32000); // 2 s × 16 kHz
-        assert_eq!(cfg.overlap_samples(), 8000); // 0.5 s × 16 kHz
-        assert_eq!(cfg.step_samples(), 24000); // 32000 - 8000
+        assert_eq!(cfg.chunk_samples(), 80000); // 5 s × 16 kHz
+        assert_eq!(cfg.overlap_samples(), 16000); // 1 s × 16 kHz
+        assert_eq!(cfg.step_samples(), 64000); // 80000 - 16000
     }
 
     #[test]
@@ -605,15 +605,10 @@ mod tests {
         let mut ring = RingBuffer::new(test_config());
         assert!(ring.is_empty());
 
-        // Push 1 second of silence
-        let one_sec: Vec<f32> = vec![0.0; 16000];
-        ring.push(&one_sec);
-        assert_eq!(ring.len(), 16000);
-        assert!(ring.peek_chunk().is_none()); // need 32000
-
-        // Push another second
-        ring.push(&one_sec);
-        assert_eq!(ring.len(), 32000);
+        // Push 5 seconds of silence (need 80000 for a full chunk)
+        let five_sec: Vec<f32> = vec![0.0; 80000];
+        ring.push(&five_sec);
+        assert_eq!(ring.len(), 80000);
         assert!(ring.peek_chunk().is_some());
     }
 
@@ -621,21 +616,22 @@ mod tests {
     fn test_ring_buffer_overlap_advance() {
         let mut ring = RingBuffer::new(test_config());
 
-        // Fill buffer with identifiable samples
-        let samples: Vec<f32> = (0..48000).map(|i| i as f32 / 48000.0).collect();
+        // Fill buffer with 6 seconds of identifiable samples (need 96000 for
+        // 80000 chunk + 16000 after advance)
+        let samples: Vec<f32> = (0..96000).map(|i| i as f32 / 96000.0).collect();
         ring.push(&samples);
 
         let chunk1 = ring.peek_chunk().unwrap();
-        assert_eq!(chunk1.len(), 32000);
+        assert_eq!(chunk1.len(), 80000);
         assert!((chunk1[0] - 0.0).abs() < 0.001);
-        assert!((chunk1[100] - 100.0 / 48000.0).abs() < 0.001);
+        assert!((chunk1[100] - 100.0 / 96000.0).abs() < 0.001);
 
-        ring.advance(); // step = 24000
-        assert_eq!(ring.len(), 48000 - 24000);
+        ring.advance(); // step = 64000
+        assert_eq!(ring.len(), 96000 - 64000);
 
-        // After advance, the remaining data starts at sample index 24000
-        // Since we consumed 24000 and have 24000 left, next peek should need
-        // 32000, but we only have 24000, so it should return None
+        // After advance, the remaining data starts at sample index 64000
+        // Since we consumed 64000 and have 32000 left, next peek should need
+        // 80000, but we only have 32000, so it should return None
         assert!(ring.peek_chunk().is_none());
     }
 
@@ -649,7 +645,7 @@ mod tests {
         assert_eq!(bytes[1], 0);
         // 1.0 → 32767
         let last = i16::from_le_bytes([bytes[bytes.len() - 2], bytes[bytes.len() - 1]]);
-        assert_eq!(last, -32768); // -1.0 → -32768
+        assert_eq!(last, -32767); // -1.0 → -32767 (production uses * 32767.0)
     }
 
     #[test]
@@ -671,18 +667,22 @@ mod tests {
         cap.start().unwrap();
         assert!(cap.is_active());
 
-        // Need enough data for a full chunk (32000 samples mono → 64000 PCM bytes)
-        // Push 3 seconds of non-silent audio at 48 kHz stereo = 144k samples
-        let three_sec_frames = 48_000 * 3; // 144k frames
+        // Need enough data for a full chunk (80000 samples mono → 160000 PCM bytes)
+        // Push 6 seconds of non-silent audio at 48 kHz stereo = 288k frames.
+        // Use a 200 Hz sine wave — well above the 80 Hz high-pass cutoff,
+        // and an integer number of cycles so DC removal is a no-op.
+        use std::f32::consts::PI;
+        let three_sec_frames = 48_000 * 6; // 288k frames
         let mut big_buf = Vec::with_capacity(three_sec_frames * 2);
-        for _ in 0..three_sec_frames {
-            big_buf.push(0.1);
-            big_buf.push(0.1);
+        for i in 0..three_sec_frames {
+            let val = (2.0 * PI * 200.0 * i as f32 / 48000.0).sin() * 0.1;
+            big_buf.push(val); // L
+            big_buf.push(val); // R
         }
         let result = cap.handle_audio_buffer(&big_buf);
         assert!(result.is_some());
         let pcm = result.unwrap();
-        assert_eq!(pcm.len(), 32000 * 2); // 32000 samples × 2 bytes = 64000
+        assert_eq!(pcm.len(), 80000 * 2); // 80000 samples × 2 bytes = 160000
     }
 
     #[test]
@@ -690,9 +690,9 @@ mod tests {
         let mut cap = AudioCapture::new(test_config());
         cap.start().unwrap();
 
-        // Push silent audio
-        let three_sec_frames = 48_000 * 3;
-        let mut buf = vec![0.0f32; three_sec_frames * 2]; // all zeros
+        // Push silent audio — need 5 seconds (240k frames) to fill an 80k chunk
+        let frames = 48_000 * 5; // 240k frames at 48 kHz → 80k mono samples after resample
+        let buf = vec![0.0f32; frames * 2]; // all zeros
         let result = cap.handle_audio_buffer(&buf);
         assert!(result.is_none()); // silence → no chunk
         assert_eq!(cap.audio_status, AudioStatus::Silence);
